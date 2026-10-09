@@ -60,7 +60,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	// CH1::L7> Thanks for screwing with my neat comment chains.  Anyway, updated to write to file instead of previous nonsense
-	imagePath := getAssetPath(videoID, mediaType)
+	imagePath := getAssetPath(mediaType) //getAssetPath(videoID, mediaType)
 	imageDiskPath := cfg.getAssetDiskPath(imagePath)
 	f, err := os.Create(imageDiskPath)
 	if err != nil {
