@@ -62,17 +62,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusInternalServerError, "Could't retrieve video metadata", err)
 		return
 	}
-	// 6> SDave the thumbnail to the global map
-	// 6.1> Create a new thumbnail struct with the image data and media type
-	videoThumbnail := thumbnail{
-		data:      videoData,
-		mediaType: mediaType,
-	}
-	// 6.2> Add the thumbnail to the global map, using the video's ID as the key
-	videoThumbnails[videoID] = videoThumbnail
-	// 7> Update the video metadata so that it has a new thumbnail URL, then update the record in the database by using the cfg.db.UpdateVideo function
-	// 	  The thumbnail URL should have this format: http://localhost:<port>/api/thumbnails/{videoID}
-
+	// L6::1-6
 	videoDataString := base64.StdEncoding.EncodeToString(videoData)
 
 	newUrl := fmt.Sprintf("data:%v;base64,%v", mediaType, videoDataString)
