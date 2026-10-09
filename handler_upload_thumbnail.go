@@ -1,10 +1,11 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -49,11 +50,27 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	// 3.2> Get the media type from the form file's Content-Type header
-	mediaType := imageHeader.Header.Get("Content-Type")
-	// 4> Read all the image data into a byte slice using io.ReadAll
-	videoData, err := io.ReadAll(imageData)
+	mediaType, _, err := mime.ParseMediaType(imageHeader.Header.Get("Content-Type"))
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Could't read image data", err)
+		respondWithError(w, http.StatusBadRequest, "Invalid Content-Type", nil)
+		return
+	}
+	if mediaType != "image/jpg" && mediaType != "image/png" {
+		respondWithError(w, http.StatusBadRequest, "Invalid file type", nil)
+		return
+	}
+	// CH1::L7> Thanks for screwing with my neat comment chains.  Anyway, updated to write to file instead of previous nonsense
+	imagePath := getAssetPath(videoID, mediaType)
+	imageDiskPath := cfg.getAssetDiskPath(imagePath)
+	f, err := os.Create(imageDiskPath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could't create file on server", err)
+		return
+	}
+	defer f.Close()
+	// copy the file. duh
+	if _, err = io.Copy(f, imageData); err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error saving file", err)
 		return
 	}
 	// 5> Get the video's metadata from the SQLite database.  The apiConfig's db has a GetVideo method
@@ -62,10 +79,8 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusInternalServerError, "Could't retrieve video metadata", err)
 		return
 	}
-	// L6::1-6
-	videoDataString := base64.StdEncoding.EncodeToString(videoData)
 
-	newUrl := fmt.Sprintf("data:%v;base64,%v", mediaType, videoDataString)
+	newUrl := cfg.getAssetURL(imagePath)
 	dbVideo.ThumbnailURL = &newUrl
 	err = cfg.db.UpdateVideo(dbVideo)
 	if err != nil {
