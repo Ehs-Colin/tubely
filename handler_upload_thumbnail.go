@@ -73,7 +73,11 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	// 	  The thumbnail URL should have this format: http://localhost:<port>/api/thumbnails/{videoID}
 	newUrl := fmt.Sprintf("http://localhost:%v/api/thumbnails/%v", cfg.port, videoIDString)
 	dbVideo.ThumbnailURL = &newUrl
-	cfg.db.UpdateVideo(dbVideo)
+	err = cfg.db.UpdateVideo(dbVideo)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could't update video info", err)
+		return
+	}
 
 	respondWithJSON(w, http.StatusOK, dbVideo)
 }
