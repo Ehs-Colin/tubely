@@ -49,6 +49,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusInternalServerError, "Could't get image data from platform", err)
 		return
 	}
+	defer imageData.Close()
 	// 3.2> Get the media type from the form file's Content-Type header
 	mediaType, _, err := mime.ParseMediaType(imageHeader.Header.Get("Content-Type"))
 	if err != nil {
@@ -79,12 +80,16 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusInternalServerError, "Could't retrieve video metadata", err)
 		return
 	}
+	if dbVideo.UserID != userID {
+		respondWithError(w, http.StatusUnauthorized, "Not authorized to update this video", nil)
+		return
+	}
 
 	newUrl := cfg.getAssetURL(imagePath)
 	dbVideo.ThumbnailURL = &newUrl
 	err = cfg.db.UpdateVideo(dbVideo)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Could't update video info", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't update video info", err)
 		return
 	}
 
