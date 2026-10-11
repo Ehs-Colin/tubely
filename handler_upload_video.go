@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -81,17 +83,35 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Error resetting file", err)
 		return
 	}
+
+	processedFilePath, err := processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error processing file", err)
+		return
+	}
+	defer os.Remove(processedFilePath
+
+	processedFile, err := os.Open(processedFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error with processed video", err)
+		return
+	}
+	)
+	defer processedFile.Close()
+
 	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error finding aspect ratio", err)
+		respondWithError(w, http.StatusInternalServerError, "Could not open processed file", err)
 		return
 	}
 	// 9> Put the object into S3 using PutObject
-	key := aspectRatio + "/" + getAssetPath(mediaType)
+	key := path.Join(aspectRatio, getAssetPath(mediaType))
+
+
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
 		Key:         aws.String(key),
-		Body:        tempFile,
+		Body:        processedFile,
 		ContentType: aws.String(mediaType),
 	})
 	if err != nil {
@@ -114,7 +134,9 @@ func getVideoAspectRatio(filePath string) (string, error) {
 	var buffer bytes.Buffer
 	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
 	cmd.Stdout = &buffer
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("coud not parse ffprobe output: %v", err)
+	}
 
 	videoFileJSON := FfprobeFile{}
 	err := json.Unmarshal(buffer.Bytes(), &videoFileJSON)
@@ -130,4 +152,25 @@ func getVideoAspectRatio(filePath string) (string, error) {
 		return "landscape", nil
 	}
 	return "other", nil
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	outputFilePath := fmt.Sprintf("%s.processing", filePath)
+	cmd := exec.Command("ffmpeg", "-i", filePath, "-c", "copy", "-movflags", "faststart", "-f", "mp4", outputFilePath)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("error processing video: %s, %v", stderr.String(), err)
+	}
+
+	fileInfo, err := os.Stat(outputFilePath)
+	if err != nil {
+		return "", fmt.Errorf("could not stat processed file: %v", err)
+	}
+	if fileInfo.Size() == 0 {
+		return "", fmt.Errorf("processed file is empty")
+	}
+
+	return outputFilePath, nil
 }
