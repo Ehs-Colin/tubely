@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -78,8 +81,13 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Error resetting file", err)
 		return
 	}
+	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error finding aspect ratio", err)
+		return
+	}
 	// 9> Put the object into S3 using PutObject
-	key := getAssetPath(mediaType)
+	key := aspectRatio + "/" + getAssetPath(mediaType)
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
 		Key:         aws.String(key),
@@ -100,4 +108,26 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondWithJSON(w, http.StatusOK, dbVideo)
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	var buffer bytes.Buffer
+	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
+	cmd.Stdout = &buffer
+	cmd.Run()
+
+	videoFileJSON := FfprobeFile{}
+	err := json.Unmarshal(buffer.Bytes(), &videoFileJSON)
+	if err != nil {
+		return "", err
+	}
+
+	height := videoFileJSON.Streams[0].Height
+	width := videoFileJSON.Streams[0].Width
+	if height == 16*width/9 {
+		return "portrait", nil
+	} else if width == 16*height/9 {
+		return "landscape", nil
+	}
+	return "other", nil
 }
