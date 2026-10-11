@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,10 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"github.com/google/uuid"
 )
 
@@ -89,14 +93,13 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Error processing file", err)
 		return
 	}
-	defer os.Remove(processedFilePath
+	defer os.Remove(processedFilePath)
 
 	processedFile, err := os.Open(processedFilePath)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error with processed video", err)
 		return
 	}
-	)
 	defer processedFile.Close()
 
 	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
@@ -106,7 +109,6 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 	// 9> Put the object into S3 using PutObject
 	key := path.Join(aspectRatio, getAssetPath(mediaType))
-
 
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
@@ -119,15 +121,56 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	// 10> Update VideoURL in database with S3 bucket and key
-	newUrl := cfg.getObjectURL(key)
+	newUrl := fmt.Sprintf("%s,%s", cfg.s3Bucket, key)
 	dbVideo.VideoURL = &newUrl
 	err = cfg.db.UpdateVideo(dbVideo)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't update video", err)
 		return
 	}
+	dbVideo, err = cfg.dbVideoToSignedVideo(dbVideo)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't generate presigned URL", err)
+		return
+	}
 
 	respondWithJSON(w, http.StatusOK, dbVideo)
+}
+
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+	if video.VideoURL == nil {
+		return video, nil
+	}
+	parts := strings.Split(*video.VideoURL, ",")
+	if len(parts) < 2 {
+		return video, nil
+	}
+	bucket := parts[0]
+	key := parts[1]
+	expireTime, err := time.ParseDuration("5m")
+	if err != nil {
+		return video, err
+	}
+
+	newUrl, err := generatePresignedURL(cfg.s3Client, bucket, key, expireTime)
+	if err != nil {
+		return video, err
+	}
+	video.VideoURL = &newUrl
+	return video, nil
+}
+
+func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
+	preSignClient := s3.NewPresignClient(s3Client)
+	presignedUrl, err := preSignClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(expireTime))
+	if err != nil {
+		return "", fmt.Errorf("failed to generate presigned URL: %v", err)
+	}
+
+	return presignedUrl.URL, nil
 }
 
 func getVideoAspectRatio(filePath string) (string, error) {
